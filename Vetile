@@ -405,19 +405,14 @@ void ApplyTargetPriority(TagChannel ch)
     for (int i = 0; i < ch.CombatBlocks.Count; i++)
     {
         var block = ch.CombatBlocks[i];
-        if (block == null || block.Closed || block.CubeGrid == null)
-            continue;
-
-        if (block.CubeGrid.GetCubeBlock(block.Position) == null)
-            continue;
-
-        block.ApplyAction(action);
+        if (block != null)
+            block.ApplyAction(action);
     }
 }
 
 void ApplyTargetSubsystem(TagChannel ch)
 {
-    if (ch == null || ch.CombatBlocks == null || ch.CombatBlocks.Count == 0)
+    if (ch.CombatBlocks == null || ch.CombatBlocks.Count == 0)
         return;
 
     string action = GetSubsystemAction(globalTargetSubsystemMode);
