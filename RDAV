@@ -619,6 +619,12 @@
           public Vector3D ReferenceForwards;
           public Vector3D ReferenceUpwards;
 
+          public Vector3D MarkerFrameLocation;
+          public Vector3D MarkerFrameForwards;
+          public Vector3D MarkerFrameUpwards;
+          public Vector3D MarkerLocation;
+          public bool DrawReferenceMarker;
+
           public List<TargetInfo> ToDisplay;
 
           public string Targetmode;
@@ -655,6 +661,16 @@
                   renderableSprites.Add(DrawRectangle_FromCntr(Squarelocation, 0.025f, 0.025f, item.RenderColour, true));
                   renderableSprites.Add(DrawLine(Squarelocation, Squarepointpos, 0.005f, item.RenderColour));
                   renderableSprites.Add(DrawText(item.Velocity.Length().ToString("F1"), Squarelocation + new Vector2(0.02f, -0.04f), item.RenderColour, 0.5f, TextAlignment.LEFT));
+              }
+
+              //Renders Information GUI
+              if (args.DrawReferenceMarker)
+              {
+                  Vector2 sourcelocation, sourcepointpos;
+                  MatrixD markerViewMatrix = MatrixD.CreateWorld(args.MarkerFrameLocation, args.MarkerFrameForwards, args.MarkerFrameUpwards);
+                  MatrixD markerViewInv = MatrixD.Invert(markerViewMatrix);
+                  ProjectToPlane(markerViewInv, args.MarkerLocation, Vector3D.Zero, out sourcelocation, out sourcepointpos);
+                  renderableSprites.Add(DrawCircle(sourcelocation, 0.012f, Color.LimeGreen, true));
               }
 
               //Renders Information GUI
@@ -1400,9 +1416,15 @@
           GuiRefreshCounter = 0;
 
           TrackingDisplay.RuntimeAgs runtimeAgs = new TrackingDisplay.RuntimeAgs();
-          runtimeAgs.ReferenceLocation = ExternalFeedHasTarget ? ExternalSourcePosition : RC.GetPosition();
-          runtimeAgs.ReferenceForwards = ExternalFeedHasTarget && ExternalSourceForward.LengthSquared() > 0.001 ? Vector3D.Normalize(ExternalSourceForward) : RC.WorldMatrix.Forward;
-          runtimeAgs.ReferenceUpwards = ExternalFeedHasTarget && ExternalSourceUp.LengthSquared() > 0.001 ? Vector3D.Normalize(ExternalSourceUp) : RC.WorldMatrix.Up;
+          runtimeAgs.ReferenceLocation = ExternalFeedActive ? ExternalSourcePosition : RC.GetPosition();
+          runtimeAgs.ReferenceForwards = ExternalFeedActive && ExternalSourceForward.LengthSquared() > 0.001 ? Vector3D.Normalize(ExternalSourceForward) : RC.WorldMatrix.Forward;
+          runtimeAgs.ReferenceUpwards = ExternalFeedActive && ExternalSourceUp.LengthSquared() > 0.001 ? Vector3D.Normalize(ExternalSourceUp) : RC.WorldMatrix.Up;
+
+          runtimeAgs.MarkerFrameLocation = RC.GetPosition();
+          runtimeAgs.MarkerFrameForwards = RC.WorldMatrix.Forward;
+          runtimeAgs.MarkerFrameUpwards = RC.WorldMatrix.Up;
+          runtimeAgs.MarkerLocation = ExternalFeedActive ? ExternalSourcePosition : RC.GetPosition();
+          runtimeAgs.DrawReferenceMarker = true;
           runtimeAgs.TargetLock = HasTarget;
           runtimeAgs.Targetmode = "RDAR";
           runtimeAgs.Targetinfoline1 = ThisTracker.GetLine1Info();
