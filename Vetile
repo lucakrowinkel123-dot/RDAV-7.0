@@ -412,7 +412,7 @@ void ApplyTargetPriority(TagChannel ch)
 
 void ApplyTargetSubsystem(TagChannel ch)
 {
-    if (ch == null || ch.CombatBlocks == null || ch.CombatBlocks.Count == 0)
+    if (ch.CombatBlocks == null || ch.CombatBlocks.Count == 0)
         return;
 
     string action = GetSubsystemAction(globalTargetSubsystemMode);
