@@ -150,9 +150,23 @@ void ConfigureAiBlocks()
         combatBlock.SetValue<long>("OffensiveCombatIntercept_GuidanceType", 0);
         combatBlock.SetValueBool("OffensiveCombatIntercept_OverrideCollisionAvoidance", true);
         combatBlock.ApplyAction("ActivateBehavior_On");
-        combatBlock.ApplyAction(GetPriorityAction(targetPriorityMode));
-        combatBlock.ApplyAction(GetSubsystemAction(targetSubsystemMode));
+        ApplyCombatActionSafe(combatBlock, GetPriorityAction(targetPriorityMode), "SetTargetPriority_Largest");
+        ApplyCombatActionSafe(combatBlock, GetSubsystemAction(targetSubsystemMode), "SetTargetingGroup_Any");
     }
+}
+
+void ApplyCombatActionSafe(IMyOffensiveCombatBlock combat, string requestedAction, string fallbackAction)
+{
+    if (combat == null || combat.Closed)
+        return;
+
+    var action = combat.GetActionWithName(requestedAction);
+    if (action == null && !string.IsNullOrWhiteSpace(fallbackAction))
+        action = combat.GetActionWithName(fallbackAction);
+    if (action == null)
+        return;
+
+    action.Apply(combat);
 }
 
 string GetPriorityAction(TargetPriorityMode mode)
