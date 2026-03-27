@@ -618,6 +618,7 @@
           public Vector3D ReferenceLocation;
           public Vector3D ReferenceForwards;
           public Vector3D ReferenceUpwards;
+          public bool DrawReferenceMarker;
 
           public Vector3D MarkerFrameLocation;
           public Vector3D MarkerFrameForwards;
