@@ -420,8 +420,13 @@ void ApplyTargetSubsystem(TagChannel ch)
     for (int i = 0; i < ch.CombatBlocks.Count; i++)
     {
         var block = ch.CombatBlocks[i];
-        if (block != null)
-            block.ApplyAction(action);
+        if (block == null || block.Closed || block.CubeGrid == null)
+            continue;
+
+        if (block.CubeGrid.GetCubeBlock(block.Position) == null)
+            continue;
+
+        block.ApplyAction(action);
     }
 }
 
