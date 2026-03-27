@@ -4,6 +4,7 @@
 
 const string TAG = "#Vetile#";
 const string CHANNEL = "VETILE_SCOUT_TARGET";
+const string CONTROL_CHANNEL = "VETILE_SCOUT_CONTROL";
 const string PACKET_HEADER = "VTARGET";
 const string PACKET_VERSION = "1";
 const double SEND_INTERVAL_SECONDS = 0.1;
@@ -12,17 +13,36 @@ const int FORCE_CONFIG_EVERY_N_SENDS = 10;
 IMyFlightMovementBlock flightBlock;
 IMyOffensiveCombatBlock combatBlock;
 IMyShipController scoutController;
+IMyBroadcastListener controlListener;
 double sendTimer;
 double elapsedSeconds;
 int sendCounter;
 Vector3D lastTargetPosition = Vector3D.Zero;
 Vector3D lastTargetVelocity = Vector3D.Zero;
 double lastTargetSeenAt = -9999;
+TargetPriorityMode targetPriorityMode = TargetPriorityMode.Largest;
+TargetSubsystemMode targetSubsystemMode = TargetSubsystemMode.Any;
+
+enum TargetPriorityMode
+{
+    Largest,
+    Closest,
+    Smallest
+}
+
+enum TargetSubsystemMode
+{
+    Any,
+    Weapons,
+    Propulsion,
+    PowerSystems
+}
 
 public Program()
 {
     Runtime.UpdateFrequency = UpdateFrequency.Update10;
     LoadBlocks();
+    RegisterControlListener();
 }
 
 public void Save() { }
@@ -38,6 +58,8 @@ public void Main(string argument, UpdateType updateSource)
         else if (argument.Equals("ping", StringComparison.OrdinalIgnoreCase))
             Echo("pong");
     }
+
+    PollControlMessages();
 
     sendTimer += Runtime.TimeSinceLastRun.TotalSeconds;
     if (sendTimer < SEND_INTERVAL_SECONDS)
@@ -70,6 +92,42 @@ void LoadBlocks()
     ConfigureAiBlocks();
 }
 
+void RegisterControlListener()
+{
+    controlListener = IGC.RegisterBroadcastListener(CONTROL_CHANNEL);
+    controlListener.SetMessageCallback("ctrl");
+}
+
+void PollControlMessages()
+{
+    if (controlListener == null)
+        return;
+
+    while (controlListener.HasPendingMessage)
+    {
+        var message = controlListener.AcceptMessage();
+        string payload = message.Data as string;
+        if (string.IsNullOrWhiteSpace(payload))
+            continue;
+
+        ApplyControlPayload(payload);
+    }
+}
+
+void ApplyControlPayload(string payload)
+{
+    var parts = payload.Split('|');
+    if (parts.Length < 3)
+        return;
+    if (!parts[0].Equals("VCTRL", StringComparison.OrdinalIgnoreCase))
+        return;
+
+    targetPriorityMode = ParsePriorityMode(parts[1], targetPriorityMode);
+    targetSubsystemMode = ParseSubsystemMode(parts[2], targetSubsystemMode);
+
+    ConfigureAiBlocks();
+}
+
 void ConfigureAiBlocks()
 {
     if (flightBlock != null)
@@ -92,8 +150,52 @@ void ConfigureAiBlocks()
         combatBlock.SetValue<long>("OffensiveCombatIntercept_GuidanceType", 0);
         combatBlock.SetValueBool("OffensiveCombatIntercept_OverrideCollisionAvoidance", true);
         combatBlock.ApplyAction("ActivateBehavior_On");
-        combatBlock.ApplyAction("SetTargetPriority_Largest");
+        combatBlock.ApplyAction(GetPriorityAction(targetPriorityMode));
+        combatBlock.ApplyAction(GetSubsystemAction(targetSubsystemMode));
     }
+}
+
+string GetPriorityAction(TargetPriorityMode mode)
+{
+    if (mode == TargetPriorityMode.Closest) return "SetTargetPriority_Closest";
+    if (mode == TargetPriorityMode.Smallest) return "SetTargetPriority_Smallest";
+    return "SetTargetPriority_Largest";
+}
+
+string GetSubsystemAction(TargetSubsystemMode mode)
+{
+    if (mode == TargetSubsystemMode.Weapons) return "SetTargetingGroup_Weapons";
+    if (mode == TargetSubsystemMode.Propulsion) return "SetTargetingGroup_Propulsion";
+    if (mode == TargetSubsystemMode.PowerSystems) return "SetTargetingGroup_PowerSystems";
+    return "SetTargetingGroup_Any";
+}
+
+TargetPriorityMode ParsePriorityMode(string raw, TargetPriorityMode fallback)
+{
+    if (string.IsNullOrWhiteSpace(raw))
+        return fallback;
+    if (raw.Equals("Closest", StringComparison.OrdinalIgnoreCase))
+        return TargetPriorityMode.Closest;
+    if (raw.Equals("Smallest", StringComparison.OrdinalIgnoreCase))
+        return TargetPriorityMode.Smallest;
+    if (raw.Equals("Largest", StringComparison.OrdinalIgnoreCase))
+        return TargetPriorityMode.Largest;
+    return fallback;
+}
+
+TargetSubsystemMode ParseSubsystemMode(string raw, TargetSubsystemMode fallback)
+{
+    if (string.IsNullOrWhiteSpace(raw))
+        return fallback;
+    if (raw.Equals("Weapons", StringComparison.OrdinalIgnoreCase))
+        return TargetSubsystemMode.Weapons;
+    if (raw.Equals("Propulsion", StringComparison.OrdinalIgnoreCase))
+        return TargetSubsystemMode.Propulsion;
+    if (raw.Equals("PowerSystems", StringComparison.OrdinalIgnoreCase))
+        return TargetSubsystemMode.PowerSystems;
+    if (raw.Equals("Any", StringComparison.OrdinalIgnoreCase))
+        return TargetSubsystemMode.Any;
+    return fallback;
 }
 
 string BuildPacket()
@@ -161,6 +263,7 @@ void EchoStatus(string packet)
     Echo("Vetile Scout Relay");
     Echo($"Tag: {TAG}");
     Echo($"Callsign: {GetCallsign()}");
+    Echo($"Target profile: {targetPriorityMode}/{targetSubsystemMode}");
     Echo($"Target: {(hasTarget ? "LOCK" : "NONE")}");
     Echo($"TargetPersistAge: {(elapsedSeconds - lastTargetSeenAt):0.0}s");
     Echo($"FlightAI: {(flightBlock != null ? "OK" : "MISSING")}");

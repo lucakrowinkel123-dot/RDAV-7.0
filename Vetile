@@ -28,8 +28,10 @@ const string ALERT_SOUND_NAME = "Alert 2";
 const string TARGET_PACKET_HEADER = "VTARGET";
 const string TARGET_PACKET_VERSION = "1";
 const string IGC_SCOUT_CHANNEL = "VETILE_SCOUT_TARGET";
+const string IGC_SCOUT_CONTROL_CHANNEL = "VETILE_SCOUT_CONTROL";
 const double REMOTE_TARGET_STALE_SECONDS = 2.0;
 const string RDAV_STATUS_NONE = "NO_TARGET";
+const string SOURCE_ID_KEY = "SourceId";
 
 enum ControllerState
 {
@@ -50,6 +52,14 @@ enum TargetSourceMode
 {
     Local,
     Remote
+}
+
+enum TargetSubsystemMode
+{
+    Any,
+    Weapons,
+    Propulsion,
+    PowerSystems
 }
 
 struct TargetPacket
@@ -104,6 +114,7 @@ IMyTextPanel summaryLcd;
 IMySoundBlock alertSoundBlock;
 IMyShipController navController;
 TargetPriorityMode globalTargetMode = TargetPriorityMode.Largest;
+TargetSubsystemMode globalTargetSubsystemMode = TargetSubsystemMode.Any;
 Queue<TagChannel> fireAllQueue = new Queue<TagChannel>();
 bool fireAllSequenceActive;
 double fireAllTimer;
@@ -118,10 +129,14 @@ List<string> remoteSourceOrder = new List<string>();
 int selectedRemoteIndex;
 TargetPacket activeTargetPacket;
 double activeTargetDistanceMeters = -1;
+string configuredSourceId = "local";
+double remoteSettingBroadcastTimer;
+const double REMOTE_SETTING_BROADCAST_SECONDS = 1.0;
 
 public Program()
 {
     Runtime.UpdateFrequency = UpdateFrequency.Update10;
+    LoadConfig();
 
     for (int i = 0; i < TAGS.Length; i++)
         channels[TAGS[i]] = new TagChannel(TAGS[i]);
@@ -143,6 +158,7 @@ public void Main(string argument, UpdateType updateSource)
     {
         if (argument.Equals("refresh", StringComparison.OrdinalIgnoreCase))
         {
+            LoadConfig();
             LoadBlocksAll();
             LoadSummaryLcd();
             LoadAlertSoundBlock();
@@ -173,6 +189,17 @@ public void Main(string argument, UpdateType updateSource)
         else if (argument.Equals("cycletarget", StringComparison.OrdinalIgnoreCase) || argument.Equals("target", StringComparison.OrdinalIgnoreCase))
         {
             CycleTargetPriorityAll();
+            return;
+        }
+        else if (argument.Equals("targetsystem", StringComparison.OrdinalIgnoreCase) || argument.Equals("cyclesystem", StringComparison.OrdinalIgnoreCase))
+        {
+            CycleTargetSubsystemAll();
+            return;
+        }
+        else if (argument.Equals("targetboth", StringComparison.OrdinalIgnoreCase))
+        {
+            CycleTargetPriorityAll();
+            CycleTargetSubsystemAll();
             return;
         }
         else if (argument.Equals("start", StringComparison.OrdinalIgnoreCase) || argument.Equals("forcestart", StringComparison.OrdinalIgnoreCase))
@@ -215,6 +242,13 @@ public void Main(string argument, UpdateType updateSource)
 
     if (fireAllSequenceActive)
         ProcessFireAllSequence();
+
+    remoteSettingBroadcastTimer += Runtime.TimeSinceLastRun.TotalSeconds;
+    if (remoteSettingBroadcastTimer >= REMOTE_SETTING_BROADCAST_SECONDS)
+    {
+        remoteSettingBroadcastTimer = 0;
+        BroadcastRemoteTargetSettings();
+    }
 
     warheadRangeCheckTimer += Runtime.TimeSinceLastRun.TotalSeconds;
     double warheadSliceSeconds = WARHEAD_RANGE_CHECK_SECONDS / Math.Max(1, TAGS.Length);
@@ -331,6 +365,18 @@ void CycleTargetPriorityAll()
     foreach (var kv in channels)
         ApplyTargetPriority(kv.Value);
 
+    BroadcastRemoteTargetSettings();
+    UpdateSummaryLcd();
+}
+
+void CycleTargetSubsystemAll()
+{
+    globalTargetSubsystemMode = NextSubsystemMode(globalTargetSubsystemMode);
+
+    foreach (var kv in channels)
+        ApplyTargetSubsystem(kv.Value);
+
+    BroadcastRemoteTargetSettings();
     UpdateSummaryLcd();
 }
 
@@ -341,14 +387,20 @@ TargetPriorityMode NextTargetMode(TargetPriorityMode current)
     return TargetPriorityMode.Closest;
 }
 
+TargetSubsystemMode NextSubsystemMode(TargetSubsystemMode current)
+{
+    if (current == TargetSubsystemMode.Any) return TargetSubsystemMode.Weapons;
+    if (current == TargetSubsystemMode.Weapons) return TargetSubsystemMode.Propulsion;
+    if (current == TargetSubsystemMode.Propulsion) return TargetSubsystemMode.PowerSystems;
+    return TargetSubsystemMode.Any;
+}
+
 void ApplyTargetPriority(TagChannel ch)
 {
     if (ch.CombatBlocks == null || ch.CombatBlocks.Count == 0)
         return;
 
-    string action = "SetTargetPriority_Largest";
-    if (globalTargetMode == TargetPriorityMode.Closest) action = "SetTargetPriority_Closest";
-    if (globalTargetMode == TargetPriorityMode.Smallest) action = "SetTargetPriority_Smallest";
+    string action = GetPriorityAction(globalTargetMode);
 
     for (int i = 0; i < ch.CombatBlocks.Count; i++)
     {
@@ -356,6 +408,42 @@ void ApplyTargetPriority(TagChannel ch)
         if (block != null)
             block.ApplyAction(action);
     }
+}
+
+void ApplyTargetSubsystem(TagChannel ch)
+{
+    if (ch.CombatBlocks == null || ch.CombatBlocks.Count == 0)
+        return;
+
+    string action = GetSubsystemAction(globalTargetSubsystemMode);
+
+    for (int i = 0; i < ch.CombatBlocks.Count; i++)
+    {
+        var block = ch.CombatBlocks[i];
+        if (block != null)
+            block.ApplyAction(action);
+    }
+}
+
+string GetPriorityAction(TargetPriorityMode mode)
+{
+    if (mode == TargetPriorityMode.Closest) return "SetTargetPriority_Closest";
+    if (mode == TargetPriorityMode.Smallest) return "SetTargetPriority_Smallest";
+    return "SetTargetPriority_Largest";
+}
+
+string GetSubsystemAction(TargetSubsystemMode mode)
+{
+    if (mode == TargetSubsystemMode.Weapons) return "SetTargetingGroup_Weapons";
+    if (mode == TargetSubsystemMode.Propulsion) return "SetTargetingGroup_Propulsion";
+    if (mode == TargetSubsystemMode.PowerSystems) return "SetTargetingGroup_PowerSystems";
+    return "SetTargetingGroup_Any";
+}
+
+void BroadcastRemoteTargetSettings()
+{
+    string payload = $"VCTRL|{globalTargetMode}|{globalTargetSubsystemMode}";
+    IGC.SendBroadcastMessage(IGC_SCOUT_CONTROL_CHANNEL, payload, TransmissionDistance.TransmissionDistanceMax);
 }
 
 void LoadSummaryLcd()
@@ -400,6 +488,7 @@ void UpdateSummaryLcd()
 
     var text = new StringBuilder();
     text.AppendLine($"Target Priority: {globalTargetMode}");
+    text.AppendLine($"Target System: {globalTargetSubsystemMode}");
     text.AppendLine($"Source Mode: {targetSourceMode}");
     text.AppendLine($"Target ID: {(activeTargetPacket.HasTarget ? activeTargetPacket.TargetId.ToString() : RDAV_STATUS_NONE)}");
     text.AppendLine($"Source: {activeTargetPacket.SourceName}");
@@ -844,6 +933,7 @@ void LoadBlocksForChannel(TagChannel ch)
     UpdateTankCache(ch, true);
     ch.WasTanksFilled = ch.TanksFilledCached;
     ApplyTargetPriority(ch);
+    ApplyTargetSubsystem(ch);
 }
 
 bool NameHasTag(string name, string tag)
@@ -939,7 +1029,7 @@ bool TryGetLocalPacket(out TargetPacket packet)
     packet.SourceForward = sourceBlock.WorldMatrix.Forward;
     packet.SourceUp = sourceBlock.WorldMatrix.Up;
     packet.TargetId = 0;
-    packet.SourceName = "local";
+    packet.SourceName = GetLocalSourceId();
     packet.Timestamp = elapsedSeconds;
     return true;
 }
@@ -1012,9 +1102,52 @@ TargetPacket BuildNoTargetPacket()
     packet.SourceForward = Me.WorldMatrix.Forward;
     packet.SourceUp = Me.WorldMatrix.Up;
     packet.TargetId = 0;
-    packet.SourceName = targetSourceMode == TargetSourceMode.Remote ? GetSelectedRemoteNameOrDefault() : "local";
+    packet.SourceName = targetSourceMode == TargetSourceMode.Remote ? GetSelectedRemoteNameOrDefault() : GetLocalSourceId();
     packet.Timestamp = elapsedSeconds;
     return packet;
+}
+
+void LoadConfig()
+{
+    configuredSourceId = GetCustomDataValue(SOURCE_ID_KEY, "local");
+}
+
+string GetLocalSourceId()
+{
+    if (!string.IsNullOrWhiteSpace(configuredSourceId))
+        return configuredSourceId;
+    return "local";
+}
+
+string GetCustomDataValue(string key, string fallback)
+{
+    string data = Me.CustomData ?? "";
+    var lines = data.Split('\n');
+    for (int i = 0; i < lines.Length; i++)
+    {
+        string line = lines[i];
+        int commentIndex = line.IndexOf("//", StringComparison.Ordinal);
+        if (commentIndex >= 0)
+            line = line.Substring(0, commentIndex);
+
+        line = line.Trim();
+        if (string.IsNullOrWhiteSpace(line))
+            continue;
+
+        int splitIndex = line.IndexOf('=');
+        if (splitIndex <= 0)
+            continue;
+
+        string parsedKey = line.Substring(0, splitIndex).Trim();
+        if (!parsedKey.Equals(key, StringComparison.OrdinalIgnoreCase))
+            continue;
+
+        string value = line.Substring(splitIndex + 1).Trim();
+        if (!string.IsNullOrWhiteSpace(value))
+            return value;
+    }
+
+    return fallback;
 }
 
 string GetSelectedRemoteNameOrDefault()
@@ -1208,6 +1341,7 @@ void EchoSummary()
 {
     Echo("Rotor Projection Finisher (Multi-Tag)");
     Echo($"Target feed: {targetSourceMode} | source={activeTargetPacket.SourceName} | id={(activeTargetPacket.HasTarget ? activeTargetPacket.TargetId.ToString() : RDAV_STATUS_NONE)} | dist={(activeTargetDistanceMeters >= 0 ? activeTargetDistanceMeters.ToString("0") + "m" : "-")}");
+    Echo($"Target profile: Priority={globalTargetMode} | System={globalTargetSubsystemMode}");
     Echo($"Remote selection: {(remoteSourceOrder.Count > 0 ? GetSelectedRemoteNameOrDefault() : "none")} ({remoteSourceOrder.Count} known)");
 
     for (int i = 0; i < TAGS.Length; i++)
