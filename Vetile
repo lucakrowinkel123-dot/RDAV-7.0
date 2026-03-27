@@ -397,7 +397,7 @@ TargetSubsystemMode NextSubsystemMode(TargetSubsystemMode current)
 
 void ApplyTargetPriority(TagChannel ch)
 {
-    if (ch.CombatBlocks == null || ch.CombatBlocks.Count == 0)
+    if (ch == null || ch.CombatBlocks == null || ch.CombatBlocks.Count == 0)
         return;
 
     string action = GetPriorityAction(globalTargetMode);
@@ -885,12 +885,20 @@ int LockTaggedConnectors(TagChannel ch)
 
 void RefreshTaggedConnectors(TagChannel ch)
 {
+    if (ch == null)
+        return;
+    if (ch.Connectors == null)
+        ch.Connectors = new List<IMyShipConnector>();
     ch.Connectors.Clear();
     GridTerminalSystem.GetBlocksOfType(ch.Connectors, b => NameHasTag(b.CustomName, ch.Tag));
 }
 
 void RefreshTaggedTanks(TagChannel ch)
 {
+    if (ch == null)
+        return;
+    if (ch.Tanks == null)
+        ch.Tanks = new List<IMyGasTank>();
     ch.Tanks.Clear();
     GridTerminalSystem.GetBlocksOfType(ch.Tanks, b => NameHasTag(b.CustomName, ch.Tag));
 }
@@ -903,8 +911,13 @@ void LoadBlocksAll()
 
 void LoadBlocksForChannel(TagChannel ch)
 {
+    if (ch == null)
+        return;
+
     var projectors = new List<IMyProjector>();
     var rotors = new List<IMyMotorStator>();
+    if (ch.CombatBlocks == null)
+        ch.CombatBlocks = new List<IMyOffensiveCombatBlock>();
     ch.CombatBlocks.Clear();
     var welders = new List<IMyShipWelder>();
     var taggedPbs = new List<IMyProgrammableBlock>();
